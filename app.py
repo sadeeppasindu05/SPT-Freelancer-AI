@@ -146,7 +146,7 @@ def fetch_active_projects(token, query):
 
 def generate_ai_content(project_desc, api_key):
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-pro')
     
     prompt = f"""
     You are an expert freelancer in Video Editing, AI Automation, and Music Production. 
