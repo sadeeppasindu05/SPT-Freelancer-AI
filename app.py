@@ -2,6 +2,7 @@ import streamlit as st
 import google.generativeai as genai
 import requests
 import json
+import datetime
 
 # --- Page Config ---
 st.set_page_config(page_title="SPT Freelancer Automator", layout="wide")
@@ -54,7 +55,7 @@ if not st.session_state["authenticated"]:
                     st.rerun()
                 else:
                     st.error("❌ Username හෝ Password වැරදියි!")
-            except Exception as e:
+            except Exception:
                 st.error("Secrets හඳුනාගැනීමේ දෝෂයකි. Streamlit Settings පරීක්ෂා කරන්න.")
     st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
@@ -63,8 +64,14 @@ if not st.session_state["authenticated"]:
 gemini_key = st.secrets["api_keys"]["gemini_api_key"]
 freelancer_token = st.secrets["api_keys"]["freelancer_token"]
 
-# --- Helper Function: AI Processing ---
-def ask_ai(prompt):
+# --- Helper Functions ---
+def format_sl_time(timestamp):
+    if not timestamp: return "නොදනී"
+    sl_tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+    dt = datetime.datetime.fromtimestamp(timestamp, tz=sl_tz)
+    return dt.strftime("%Y-%m-%d  %I:%M %p")
+
+def call_gemini(prompt, is_json=False):
     genai.configure(api_key=gemini_key)
     available_model = None
     try:
@@ -72,60 +79,96 @@ def ask_ai(prompt):
             if 'generateContent' in m.supported_generation_methods:
                 available_model = m.name
                 break
-    except Exception as e:
-        return f'{{"english": "API Error", "sinhala": "{e}"}}'
+    except Exception:
+        return None
         
-    if not available_model:
-        return '{"english": "Error", "sinhala": "Model not found."}'
+    if not available_model: return None
 
     model = genai.GenerativeModel(available_model)
     try:
-        response = model.generate_content(prompt)
-        return response.text.replace('```json', '').replace('```', '').strip()
-    except Exception as e:
-        return f'{{"english": "Generation Error", "sinhala": "{e}"}}'
+        res = model.generate_content(prompt).text
+        if is_json:
+            cleaned = res.replace('```json', '').replace('```', '').strip()
+            return json.loads(cleaned)
+        return res.strip()
+    except Exception:
+        return None
 
 # --- Main App Interface ---
 st.markdown("<h1 style='text-align: center;'>⚡ SPT FREELANCER AUTOMATOR</h1>", unsafe_allow_html=True)
 st.markdown("<p style='text-align: center; color: #94a3b8;'>Next-Gen AI Bidding & Profile Intelligence System</p>", unsafe_allow_html=True)
 
-# Tabs Navigation
 tab1, tab2 = st.tabs(["🔍 ව්‍යාපෘති සෙවීම (Project Finder)", "👤 පැතිකඩ සැකසීම (Profile Builder)"])
 
 # --- TAB 1: Project Finder ---
 with tab1:
+    if "offset" not in st.session_state:
+        st.session_state["offset"] = 0
+
     st.markdown("<div class='glass-container'>", unsafe_allow_html=True)
-    col_s1, col_s2 = st.columns([3, 1])
+    col_s1, col_s2, col_s3 = st.columns([2, 1, 1])
     with col_s1:
         query = st.text_input("Target Skills (ඔබගේ කුසලතාවය):", "Video Editing")
-    with col_s2:
-        st.write("")
-        st.write("")
-        if st.button("🔄 අලුත් කරන්න (Refresh)"):
-            st.session_state.pop("cached_projects", None)
-            st.rerun()
     
-    if st.button("🚀 SCAN FOR LIVE PROJECTS"):
-        url = f"https://www.freelancer.com/api/projects/0.1/projects/active/?query={query}&full_description=true"
+    def fetch_projects():
+        url = f"https://www.freelancer.com/api/projects/0.1/projects/active/?query={query}&full_description=true&limit=5&offset={st.session_state['offset']}"
         headers = {"freelancer-oauth-v1": freelancer_token}
         res = requests.get(url, headers=headers)
         if res.status_code == 200:
             st.session_state["cached_projects"] = res.json().get("result", {}).get("projects", [])
         else:
             st.error("❌ ව්‍යාපෘති ලබාගැනීමේ දෝෂයකි!")
+
+    with col_s2:
+        st.write("")
+        st.write("")
+        if st.button("🚀 SCAN PROJECTS"):
+            st.session_state["offset"] = 0
+            fetch_projects()
+            st.rerun()
+
+    with col_s3:
+        st.write("")
+        st.write("")
+        if st.button("🔄 ඊළඟ 5 ගෙන්වන්න"):
+            st.session_state["offset"] += 5
+            fetch_projects()
+            st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
     if "cached_projects" in st.session_state:
-        for p in st.session_state["cached_projects"][:5]:
+        for p in st.session_state["cached_projects"]:
             title = p.get('title', 'No Title')
             desc = p.get('description', 'විස්තරයක් නොමැත.')
             pid = p.get('id', '')
             
+            # Time Calculations
+            submit_ts = p.get('time_submitted')
+            bid_period = p.get('bid_period', 7) 
+            end_ts = submit_ts + (bid_period * 24 * 3600) if submit_ts else None
+            
+            posted_time = format_sl_time(submit_ts)
+            end_time = format_sl_time(end_ts)
+            
             with st.expander(f"📌 {title} - [ID: {pid}]"):
+                st.markdown(f"**🕒 පළ කළ වේලාව:** {posted_time} &nbsp;&nbsp;|&nbsp;&nbsp; **⏳ අවසන් වන වේලාව:** {end_time}")
                 st.write(desc)
-                prop_key = f"prop_{pid}"
                 
-                if st.button("⚡ Generate AI Proposal", key=f"btn_{pid}"):
+                # Description Translation Button
+                desc_trans_key = f"trans_desc_{pid}"
+                if st.button("🇱🇰 විස්තරයේ සිංහල තේරුම පෙන්වන්න", key=f"btn_trans_{pid}"):
+                    with st.spinner("සිංහලට පරිවර්තනය කරමින්..."):
+                        trans_prompt = f"Translate this project description accurately into Sinhala. Output ONLY the Sinhala text:\n\n{desc}"
+                        st.session_state[desc_trans_key] = call_gemini(trans_prompt, is_json=False)
+                
+                if desc_trans_key in st.session_state and st.session_state[desc_trans_key]:
+                    st.info(st.session_state[desc_trans_key])
+
+                st.markdown("---")
+                
+                # Proposal Generator
+                prop_key = f"prop_{pid}"
+                if st.button("⚡ Generate AI Proposal", key=f"btn_prop_{pid}"):
                     with st.spinner("AI යෝජනාව සකසමින්..."):
                         prompt = f"""
                         You are an expert freelancer. Write a highly professional proposal (cover letter) for this project: {desc}.
@@ -135,19 +178,17 @@ with tab1:
                             "sinhala": "සිංහල පරිවර්තනය..."
                         }}
                         """
-                        res_text = ask_ai(prompt)
-                        try:
-                            st.session_state[prop_key] = json.loads(res_text)
-                        except:
-                            st.error("දත්ත සැකසීමේ දෝෂයකි.")
+                        res_data = call_gemini(prompt, is_json=True)
+                        if res_data: st.session_state[prop_key] = res_data
+                        else: st.error("දත්ත සැකසීමේ දෝෂයකි.")
                 
                 if prop_key in st.session_state:
                     c1, c2 = st.columns(2)
                     with c1:
-                        st.info("🇺🇸 English Proposal")
+                        st.success("🇺🇸 English Proposal")
                         st.write(st.session_state[prop_key].get("english", ""))
                     with c2:
-                        st.success("🇱🇰 සිංහල තේරුම")
+                        st.info("🇱🇰 සිංහල තේරුම")
                         st.write(st.session_state[prop_key].get("sinhala", ""))
                     
                     st.markdown("---")
@@ -163,12 +204,10 @@ with tab1:
                                 "sinhala": "Updated සිංහල පරිවර්තනය..."
                             }}
                             """
-                            res_text = ask_ai(prompt)
-                            try:
-                                st.session_state[prop_key] = json.loads(res_text)
+                            res_data = call_gemini(prompt, is_json=True)
+                            if res_data:
+                                st.session_state[prop_key] = res_data
                                 st.rerun()
-                            except:
-                                st.error("දෝෂයකි.")
 
 # --- TAB 2: Profile Builder ---
 with tab2:
@@ -181,25 +220,22 @@ with tab2:
         with st.spinner("ජාත්‍යන්තර පැතිකඩ සකසමින්..."):
             prompt = f"""
             You are an expert profile copywriter for freelance platforms. Create a highly compelling, professional, and attractive profile description based on these skills: {profile_skills}.
-            Format EXACTLY in this JSON structure:
+            Format EXACTLY in JSON:
             {{
                 "english": "Professional Profile Description...",
                 "sinhala": "සිංහල පරිවර්තනය..."
             }}
             """
-            res_text = ask_ai(prompt)
-            try:
-                st.session_state["profile_data"] = json.loads(res_text)
-            except:
-                st.error("දෝෂයකි.")
+            res_data = call_gemini(prompt, is_json=True)
+            if res_data: st.session_state["profile_data"] = res_data
                 
     if "profile_data" in st.session_state:
         c1, c2 = st.columns(2)
         with c1:
-            st.info("🇺🇸 English Profile")
+            st.success("🇺🇸 English Profile")
             st.write(st.session_state["profile_data"].get("english", ""))
         with c2:
-            st.success("🇱🇰 සිංහල තේරුම")
+            st.info("🇱🇰 සිංහල තේරුම")
             st.write(st.session_state["profile_data"].get("sinhala", ""))
             
         st.markdown("---")
@@ -215,10 +251,8 @@ with tab2:
                     "sinhala": "Updated සිංහල පරිවර්තනය..."
                 }}
                 """
-                res_text = ask_ai(prompt)
-                try:
-                    st.session_state["profile_data"] = json.loads(res_text)
+                res_data = call_gemini(prompt, is_json=True)
+                if res_data:
+                    st.session_state["profile_data"] = res_data
                     st.rerun()
-                except:
-                    st.error("දෝෂයකි.")
     st.markdown("</div>", unsafe_allow_html=True)
