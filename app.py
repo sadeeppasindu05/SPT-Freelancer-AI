@@ -131,7 +131,7 @@ st.markdown("<p class='subtitle-text'>Next-Gen AI Bidding & Intelligence System<
 
 # --- ශ්‍රිත (Functions) ---
 def fetch_active_projects(token, query):
-    url = f"https://www.freelancer.com/api/projects/0.1/projects/active/?query={query}&compact=true"
+    url = f"https://www.freelancer.com/api/projects/0.1/projects/active/?query={query}&full_description=true"
     headers = {"freelancer-oauth-v1": token}
     try:
         response = requests.get(url, headers=headers)
