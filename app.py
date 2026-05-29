@@ -146,7 +146,24 @@ def fetch_active_projects(token, query):
 
 def generate_ai_content(project_desc, api_key):
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-pro')
+    
+    # ස්වයංක්‍රීයව ක්‍රියාකාරී AI මොඩලය සෙවීම (Auto-detecting available model)
+    available_model = None
+    try:
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                available_model = m.name
+                break
+    except Exception as e:
+        st.error(f"API Key දෝෂයකි. කරුණාකර නිවැරදි කේතය ලබා දෙන්න: {e}")
+        return "", ""
+        
+    if not available_model:
+        st.error("ඔබගේ API කේතයට සහය දක්වන AI මොඩලයක් සොයාගත නොහැක.")
+        return "", ""
+
+    # තෝරාගත් මොඩලය හරහා දත්ත යැවීම
+    model = genai.GenerativeModel(available_model)
     
     prompt = f"""
     You are an expert freelancer in Video Editing, AI Automation, and Music Production. 
@@ -165,7 +182,7 @@ def generate_ai_content(project_desc, api_key):
         result = json.loads(cleaned_response)
         return result["english_proposal"], result["sinhala_meaning"]
     except Exception as e:
-        st.error(f"AI දෝෂයකි: {e}")
+        st.error(f"AI දෝෂයකි ({available_model}): {e}")
         return "", ""
 
 
